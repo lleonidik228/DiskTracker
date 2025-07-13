@@ -1,15 +1,27 @@
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, current_process
 from datetime import datetime
 from pathlib import Path
-import queue
 import sqlite3
 import os
 import ctypes
+import time
 # import sys
 # from tqdm import tqdm
 
+
 SLASH = r"\\"[0]
 LOCAL_C = r'C:' + SLASH
+MAXIMUM_NUMBER_OF_PROCESSES = 3
+
+#1 -347
+#2 - 158
+#3 -143 130
+#4 - 204
+#5 - 225.5799
+#6 - 203.4246
+#7 - 201.0505
+#8 - 105.1849 202.8435 196.8880 114.3475 191.1193 204.7012
+#9 - 208
 
 
 def put_time_creation_to_table(path: str) -> float:
@@ -58,9 +70,6 @@ def create_table(cursor):
 
 def is_admin():
     return True if ctypes.windll.shell32.IsUserAnAdmin() else False
-
-
-
 
 
 def find_difference():
@@ -161,24 +170,19 @@ def scan_directory(cursor, path):
     return
 
 
-def collect_data(root_directory):
-    operation = input("1: Create first data base; 2: Create second data base - ")
-    if operation == "1":
-        connection = sqlite3.connect(r'C:\Users\Leonid\PycharmProjects\filelists\firstChecking.db')
-    elif operation == "2":
-        connection = sqlite3.connect(r'C:\Users\Leonid\PycharmProjects\filelists\secondChecking.db')
-    else:
-        print("unexpected answer")
-        return
+def start_multy_process(root_directory):
+    print(current_process().name, " i exist", root_directory)
+    starting = time.time()
+    _connection = sqlite3.connect(os.getcwd() + SLASH + "timed_data_base" + SLASH + current_process().name + '.db')
+    _cursor = _connection.cursor()
+    # drop_data_base(_cursor)
+    create_table(_cursor)
+    scan_directory(_cursor, root_directory)
 
-    cursor = connection.cursor()
-    # drop_data_base(cursor)
-    create_table(cursor)
+    _connection.commit()
+    _connection.close()
+    print(current_process().name, ": i finished", root_directory, f"time: {(starting - time.time()):.4f}")
 
-    scan_directory(cursor, root_directory)
-    connection.commit()
-    connection.close()
-    print("Process complete[+]")
 
 
 def collect_data_with_multiprocessing(root_directory: str):
@@ -191,16 +195,21 @@ def collect_data_with_multiprocessing(root_directory: str):
         print("unexpected answer")
         return
 
+    start_time = time.time()
     cursor = connection.cursor()
     drop_data_base(cursor)
     create_table(cursor)
 
+    if not os.path.exists('timed_data_base'):
+        os.makedirs('timed_data_base')
+
+    _files = []
+
     for file in os.listdir(root_directory):
 
-        if os.path.isdir(root_directory + file):
-            line.put(file)
+        if os.path.isdir(root_directory + SLASH + file):
+            _files.append(file)
         else:
-            print(file)
             _short_path = convert_to_short_path(root_directory + SLASH + file)
             extensions = Path(_short_path).suffixes
             extensions = ''.join(extensions)
@@ -215,18 +224,68 @@ def collect_data_with_multiprocessing(root_directory: str):
                                             file, extensions if extensions else "None",
                                             _time_creation, _time_modification))
 
+    connection.commit()
+    #
+    # while True:
+    #     try:
+    #         print(line.get_nowait())
+    #     except queue.Empty:
+    #         break
+    print(_files)
+    processes = [Process(target=start_multy_process
+                         , args=(root_directory + SLASH + _file,)) for _file in _files]
+    alive_processes = []
 
     while True:
-        try:
-            print(line.qsize())
-            print(line.get_nowait())
-        except queue.Empty:
+        if len(alive_processes) < MAXIMUM_NUMBER_OF_PROCESSES and processes:
+            process = processes.pop()
+            alive_processes.append(process)
+            process.start()
+
+        else:
+            for alive_process in alive_processes:
+                if not alive_process.is_alive():
+                    alive_processes.remove(alive_process)
+
+        if not processes and not alive_processes:
             break
 
-    # scan_directory(cursor, root_directory)
+    for file in os.listdir('timed_data_base'):
+        if file.endswith(".db"):
+            cursor.executescript(f"""
+            ATTACH 'timed_data_base/{file}' AS db1;
+            INSERT INTO DataBase (
+                Full_path,
+                Directory,
+                Short_path,
+                File_name,
+                Extension,
+                Date_creation,
+                Date_of_last_change
+            )
+             SELECT 
+                Full_path,
+                Directory,
+                Short_path,
+                File_name,
+                Extension,
+                Date_creation,
+                Date_of_last_change
+             
+             FROM db1.DataBase;
+            DETACH db1;
+            """)
+            print("Data base", file, "was added")
+
+            connection.commit()
+
+
     connection.commit()
     connection.close()
     print("Process complete[+]")
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print(f"Программа выполнилась за {execution_time:.4f} секунд")
 
 
 def main():
@@ -257,7 +316,6 @@ def main():
 
 if __name__ == '__main__':
     line = Queue()
-    process = Process()
     main()
 
     # if not is_admin():
