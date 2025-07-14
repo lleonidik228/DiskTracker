@@ -5,6 +5,7 @@ import sqlite3
 import os
 import ctypes
 import time
+import cProfile
 # import sys
 # from tqdm import tqdm
 
@@ -14,22 +15,24 @@ LOCAL_C = r'C:' + SLASH
 MAXIMUM_NUMBER_OF_PROCESSES = 3
 
 #1 -347
-#2 - 158
-#3 -143 130
-#4 - 204
+#2 - 158 237 236.
+#3 -143 130, 217 207, 150 220 189.2042 198 184 188
+#4 - 204 221 323.3689
 #5 - 225.5799
 #6 - 203.4246
 #7 - 201.0505
 #8 - 105.1849 202.8435 196.8880 114.3475 191.1193 204.7012
 #9 - 208
+#28 200
 
 
-def put_time_creation_to_table(path: str) -> float:
+def put_time_creation_to_table_in_time_stamp(path: str) -> float:
     return os.path.getctime(path)  # return time in seconds(), return time in timestamp from 1970 unix
 
 
-def get_time_creation_from_table(timestamp_number):
-    return datetime.fromtimestamp(timestamp_number)
+def convert_time_stamp_to_time(timestamp_number):
+    return datetime.fromtimestamp(timestamp_number).strftime("%d.%m.%Y %H:%M:%S")
+
 
 
 def add_values(cursor, table, values: tuple):
@@ -41,8 +44,10 @@ def add_values(cursor, table, values: tuple):
                 File_name,
                 Extension,
                 Date_creation,
-                Date_of_last_change
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                Date_of_last_change,
+                Date_creation_time_stamp,
+                Date_of_last_change_time_stamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, values)
 
 
@@ -61,8 +66,10 @@ def create_table(cursor):
             Short_path TEXT,
             File_name TEXT,
             Extension TEXT,
-            Date_creation REAL,
-            Date_of_last_change REAL
+            Date_creation TEXT,
+            Date_of_last_change TEXT,
+            Date_creation_time_stamp REAL,
+            Date_of_last_change_time_stamp REAL
         )
             """)
     print("Data base was created! ")
@@ -154,8 +161,15 @@ def scan_directory(cursor, path):
 
         if os.path.isdir(file_in_question):
             try:
+                timestamp_creation = put_time_creation_to_table_in_time_stamp(file_in_question)
+                timestamp_modification = os.path.getmtime(file_in_question)
+
                 add_values(cursor, "DataBase", (path + SLASH + file, path, short_path, file,
-                                                "directory", put_time_creation_to_table(file_in_question), os.path.getmtime(file_in_question)))
+                                                "directory",
+                                                convert_time_stamp_to_time(timestamp_creation),
+                                                convert_time_stamp_to_time(timestamp_modification),
+                                                timestamp_creation, timestamp_modification))
+
                 scan_directory(cursor, path + SLASH + file)
             except Exception as e:
                 print('critical error - ', e)
@@ -163,9 +177,13 @@ def scan_directory(cursor, path):
         else:
             extensions = Path(file_in_question).suffixes
             extensions = ''.join(extensions)
+            timestamp_creation = put_time_creation_to_table_in_time_stamp(file_in_question)
+            timestamp_modification = os.path.getmtime(file_in_question)
             add_values(cursor, "DataBase", (path + SLASH + file, path, short_path, file,
                                             extensions if extensions else "None",
-                                            put_time_creation_to_table(file_in_question), os.path.getmtime(file_in_question)))
+                                            convert_time_stamp_to_time(timestamp_creation),
+                                            convert_time_stamp_to_time(timestamp_modification),
+                                            timestamp_creation, timestamp_modification))
 
     return
 
@@ -214,15 +232,18 @@ def collect_data_with_multiprocessing(root_directory: str):
             extensions = Path(_short_path).suffixes
             extensions = ''.join(extensions)
             try:
-                _time_creation = put_time_creation_to_table(_short_path)
-                _time_modification = os.path.getmtime(_short_path)
+                _time_creation_timestamp = put_time_creation_to_table_in_time_stamp(_short_path)
+                _time_modification_timestamp = os.path.getmtime(_short_path)
             except FileNotFoundError:
-                _time_creation = put_time_creation_to_table(root_directory + SLASH + file)
-                _time_modification = os.path.getmtime(root_directory + SLASH + file)
+                _time_creation_timestamp = put_time_creation_to_table_in_time_stamp(root_directory + SLASH + file)
+                _time_modification_timestamp = os.path.getmtime(root_directory + SLASH + file)
 
+            _time_creation = convert_time_stamp_to_time(_time_creation_timestamp)
+            _time_modification = convert_time_stamp_to_time(_time_modification_timestamp)
             add_values(cursor, "DataBase", (root_directory + SLASH + file, root_directory, _short_path,
                                             file, extensions if extensions else "None",
-                                            _time_creation, _time_modification))
+                                            _time_creation, _time_modification,
+                                            _time_creation_timestamp, _time_modification_timestamp))
 
     connection.commit()
     #
@@ -237,6 +258,7 @@ def collect_data_with_multiprocessing(root_directory: str):
     alive_processes = []
 
     while True:
+        time.sleep(0.1)
         if len(alive_processes) < MAXIMUM_NUMBER_OF_PROCESSES and processes:
             process = processes.pop()
             alive_processes.append(process)
@@ -261,7 +283,9 @@ def collect_data_with_multiprocessing(root_directory: str):
                 File_name,
                 Extension,
                 Date_creation,
-                Date_of_last_change
+                Date_of_last_change,
+                Date_creation_time_stamp,
+                Date_of_last_change_time_stamp
             )
              SELECT 
                 Full_path,
@@ -270,7 +294,9 @@ def collect_data_with_multiprocessing(root_directory: str):
                 File_name,
                 Extension,
                 Date_creation,
-                Date_of_last_change
+                Date_of_last_change,
+                Date_creation_time_stamp,
+                Date_of_last_change_time_stamp
              
              FROM db1.DataBase;
             DETACH db1;
@@ -279,6 +305,7 @@ def collect_data_with_multiprocessing(root_directory: str):
 
             connection.commit()
 
+            os.remove(os.getcwd() + SLASH + 'timed_data_base' + SLASH + file)
 
     connection.commit()
     connection.close()
@@ -316,7 +343,7 @@ def main():
 
 if __name__ == '__main__':
     line = Queue()
-    main()
+    cProfile.run('main()', "profile_stats.prof")
 
     # if not is_admin():
     #     ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
