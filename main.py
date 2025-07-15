@@ -14,16 +14,16 @@ SLASH = r"\\"[0]
 LOCAL_C = r'C:' + SLASH
 MAXIMUM_NUMBER_OF_PROCESSES = 3
 
-#1 -347
-#2 - 158 237 236.
-#3 -143 130, 217 207, 150 220 189.2042 198 184 188
-#4 - 204 221 323.3689
-#5 - 225.5799
-#6 - 203.4246
-#7 - 201.0505
-#8 - 105.1849 202.8435 196.8880 114.3475 191.1193 204.7012
-#9 - 208
-#28 200
+# 1 -347
+# 2 - 158 237 236.
+# 3 -143 130, 217 207, 150 220 189.2042 198 184 188
+# 4 - 204 221 323.3689
+# 5 - 225.5799
+# 6 - 203.4246
+# 7 - 201.0505
+# 8 - 105.1849 202.8435 196.8880 114.3475 191.1193 204.7012
+# 9 - 208
+# 28 - 200
 
 
 def put_time_creation_to_table_in_time_stamp(path: str) -> float:
@@ -87,15 +87,14 @@ def find_difference():
 
     connection_to_db_difference = sqlite3.connect(os.getcwd() + r'\databaseDifference.db')
     cursor_difference = connection_to_db_difference.cursor()
-
-    # cursor_difference.execute("""
-    # CREATE TABLE DataBase(
-    #         Number INTEGER ,
-    #         AddedFiles TEXT,
-    #         RemovedFiles TEXT
-    #     )
-    #
-    #                     """)
+    cursor_difference.execute("""DROP TABLE DataBase""")
+    cursor_difference.execute("""
+    CREATE TABLE DataBase(
+            Number INTEGER ,
+            AddedFiles TEXT,
+            RemovedFiles TEXT
+        )
+                        """)
 
     cursor_firstChecking.execute('''
     SELECT Full_path FROM DataBase
@@ -253,8 +252,8 @@ def collect_data_with_multiprocessing(root_directory: str):
     #     except queue.Empty:
     #         break
     print(_files)
-    processes = [Process(target=start_multy_process
-                         , args=(root_directory + SLASH + _file,)) for _file in _files]
+    processes = [Process(target=start_multy_process,
+                         args=(root_directory + SLASH + _file,)) for _file in _files]
     alive_processes = []
 
     while True:
