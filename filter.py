@@ -1,11 +1,11 @@
 from tqdm import tqdm
-from main import convert_time_stamp_to_time, SLASH
+from main import convert_time_stamp_to_time
 import sqlite3
-import time
 
 
-def drop_table(connection, cursor, table: str):
-    cursor.execute(f"""DROP TABLE {table}""")
+def clear_table(connection, cursor, table: str):
+    cursor.execute(f"""DELETE FROM {table}""")
+    cursor.execute(f"""DELETE FROM sqlite_sequence WHERE name='{table}'""")
     connection.commit()
 
 
@@ -24,25 +24,32 @@ def create_table(connection, cursor, table, **kwargs):
 
 
 def filter_last_modification():
+    TABLE = "ChangedFiles"
+    print("[+]", TABLE, "database in progress")
     # initial connection and cursor
-    connect_filter_db = sqlite3.connect(r'filter.db')
-    cursor_filter_db = connect_filter_db.cursor()
-
-
     # refactor database before work
-    drop_table(connection=connect_filter_db, cursor=cursor_filter_db, table="ChangedFiles")
-    create_table(connection=connect_filter_db, cursor=cursor_filter_db, table="ChangedFiles", **{
-                "Full_path": "TEXT",
-                "Time_Before": "TEXT",
-                "Time_After": "TEXT",
-                "Time_stamp_before": "INTEGER",
-                "Time_stamp_after": "INTEGER"
+
+
+    # if in database don't exist needed table, we will create it
+    if not cursor_filter_db.execute(f"""SELECT name FROM sqlite_master WHERE type='table' AND name=?""", (TABLE,)).fetchone():
+        create_table(connection=connect_filter_db, cursor=cursor_filter_db, table=TABLE, **{
+            "Full_path": "TEXT",
+            "Extension": "TEXT",
+            "Time_Before": "TEXT",
+            "Time_After": "TEXT",
+            "Time_stamp_before": "INTEGER",
+            "Time_stamp_after": "INTEGER"
             }
-                 )
+        )
+    else:
+        clear_table(connection=connect_filter_db, cursor=cursor_filter_db, table=TABLE)  # clear table before work
 
 
-    first_data = cursor_first_db.execute("SELECT Full_path, Date_creation_time_stamp FROM Database").fetchall()
-    second_data = dict(cursor_second_db.execute("SELECT Full_path, Date_creation_time_stamp FROM Database").fetchall())
+    connect_filter_db.commit()
+
+    first_data = cursor_first_db.execute("SELECT Full_path, Date_of_last_change_time_stamp FROM Database").fetchall()
+    second_data = dict(cursor_second_db.execute("SELECT Full_path, Date_of_last_change_time_stamp FROM Database").fetchall())
+    second_data_with_extension = dict(cursor_second_db.execute("SELECT Full_path, Extension FROM Database").fetchall())
 
     for first_path, first_time_stamp in tqdm(first_data):
         if first_path in second_data:
@@ -50,82 +57,102 @@ def filter_last_modification():
                 cursor_filter_db.execute("""
                     INSERT INTO ChangedFiles (
                     Full_path,
+                    Extension,
                     Time_Before,
                     Time_After,
                     Time_stamp_before,
                     Time_stamp_after
-                    ) VALUES (?, ?, ?, ?, ?)
-                """, (first_path, convert_time_stamp_to_time(first_time_stamp),
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, (first_path, second_data_with_extension[first_path], convert_time_stamp_to_time(first_time_stamp),
                       convert_time_stamp_to_time(second_data[first_path]), first_time_stamp, second_data[first_path])
                     )
 
 
     connect_filter_db.commit()
-    connect_filter_db.close()
-    connection_first_db.commit()
-    connection_second_db.commit()
+    return
 
 
 def filter_added_files():
-
-    connect_filter_db = sqlite3.connect(r'filter.db')
-    cursor_filter_db = connect_filter_db.cursor()
-    # Refactor table
-    drop_table(connection=connect_filter_db, cursor=cursor_filter_db, table="AddedFiles")
-    create_table(connect_filter_db, cursor_filter_db, "AddedFiles", **{
-        "Added_files": "TEXT",
-        "Time_creation": "TEXT"
+    TABLE = "AddedFiles"
+    print("[+]", TABLE, "database in progress")
+    # if in database don't exist needed table, we will create it
+    if not cursor_filter_db.execute(f"""SELECT name FROM sqlite_master WHERE type='table' AND name=?""", (TABLE,)).fetchone():
+        create_table(connect_filter_db, cursor_filter_db, TABLE, **{
+            "Added_files": "TEXT",
+            "Extension": "TEXT"
         }
-    )
+                     )
+    else:
+        clear_table(connection=connect_filter_db, cursor=cursor_filter_db, table=TABLE)
 
-    added_files = (set(cursor_first_db.execute("""SELECT Full_path FROM DataBase""").fetchall()) -
-                   set(cursor_second_db.execute("""SELECT Full_path FROM DataBase""").fetchall()))
+    # Refactor table
+    path_from_first_db = set(i[0] for i in cursor_first_db.execute("""SELECT Full_path FROM DataBase""").fetchall())
+    path_and_extension_from_second_db = dict(
+        cursor_second_db.execute("""SELECT Full_path, Extension FROM DataBase""").fetchall())
+
+    added_files = (set(i for i in path_and_extension_from_second_db.keys())
+                   - path_from_first_db)
 
     for added_file in tqdm(added_files):
 
-        start_time = time.time()
         cursor_filter_db.execute("""INSERT INTO AddedFiles(
             Added_files,
-            Time_creation
-        ) values(?, ?)""", (added_file[0], *cursor_first_db.execute(f"""SELECT Date_creation FROM DataBase WHERE Full_path = ?""", (added_file[0],)).fetchall()[0])
+            Extension
+        ) values(?, ?)""", (added_file, path_and_extension_from_second_db[added_file])
                              )
-        # заметки по проге, сделать так чтобы премя создания файла шло вместе с его именем в словарь, бд слишком большая и потому
-        # каждый новый запрос сканит всю бд на поиск нужного значения, поэтому надо засунуть все в дикт и рабоать по ключам, а то что я сделал - гавно долгое
-
-        print(time.time() - start_time)
 
     connect_filter_db.commit()
-    connect_filter_db.close()
+    return
+
+
+def filter_removed_files():
+    TABLE = "RemovedFiles"
+    print("[+]", TABLE, "database in progress")
+    if not cursor_filter_db.execute(f"""SELECT name FROM sqlite_master WHERE type='table' AND name=?""", (TABLE,)).fetchone():
+        create_table(connect_filter_db, cursor_filter_db, TABLE, **{
+            "Removed_files": "TEXT",
+            "Extension": "TEXT"
+        }
+                     )
+    else:
+        clear_table(connection=connect_filter_db, cursor=cursor_filter_db, table=TABLE)
+
+    path_from_first_db = dict(cursor_first_db.execute("""SELECT Full_path, Extension FROM DataBase""").fetchall())
+    path_from_second_db = set(i[0] for i in cursor_second_db.execute("""SELECT Full_path FROM DataBase""").fetchall())
+
+    removed_files = path_from_first_db.keys() - path_from_second_db
+    # print(removed_files)
+
+    for removed_file in tqdm(removed_files):
+        cursor_filter_db.execute("""INSERT INTO RemovedFiles(
+            Removed_files,
+            Extension
+        ) values(?, ?)""", (removed_file, path_from_first_db[removed_file])
+                             )
+    connect_filter_db.commit()
     return
 
 
 
 if __name__ == "__main__":
-    # connect_to_filter_data_base()
+
+    # connect to databases
     connection_first_db = sqlite3.connect(r'firstChecking.db')
     connection_second_db = sqlite3.connect(r'secondChecking.db')
+    connect_filter_db = sqlite3.connect(r'filter.db')
+
+    # creating cursors
     cursor_first_db = connection_first_db.cursor()
     cursor_second_db = connection_second_db.cursor()
+    cursor_filter_db = connect_filter_db.cursor()
 
-    # filter_last_modification()
+    # starting working with filter
+    filter_last_modification()
     filter_added_files()
+    filter_removed_files()
+
+    # commit and close
+    connect_filter_db.commit()
+    connect_filter_db.close()
     connection_first_db.close()
     connection_second_db.close()
-
-
-
-
-
-#
-# def create_data_base(connection, cursor, table, **kwargs):
-#     cursor.execute("""
-#                 CREATE TABLE ChangedFiles (
-#                         Number INTEGER PRIMARY KEY AUTOINCREMENT,
-#                         Full_path TEXT,
-#                         Time_Before TEXT,
-#                         Time_After TEXT,
-#                         Time_stamp_before INTEGER,
-#                         Time_stamp_after INTEGER
-#                 )
-#                     """)
-#     return

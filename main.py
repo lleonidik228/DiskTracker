@@ -52,9 +52,9 @@ def add_values(cursor, table, values: tuple):
 
 
 
-def drop_data_base(cursor):
-    cursor.execute("""DROP TABLE DataBase""")
-    print("Data base was deleted")
+def clear_data_base(cursor):
+    cursor.execute("""DELETE FROM DataBase""")
+    print("Data base was cleared")
 
 
 def create_table(cursor):
@@ -203,10 +203,16 @@ def start_multy_process(root_directory):
 
 
 def collect_data_with_multiprocessing(root_directory: str):
+    is_need_create_db = False
+
     operation = input("1: Create first data base; 2: Create second data base - ")
     if operation == "1":
+        if not os.path.exists(os.getcwd() + SLASH + "firstChecking.db"):
+            is_need_create_db = True
         connection = sqlite3.connect(os.getcwd() + r'\firstChecking.db')
     elif operation == "2":
+        if not os.path.exists(os.getcwd() + SLASH + "secondChecking.db"):
+            is_need_create_db = True
         connection = sqlite3.connect(os.getcwd() + r'\secondChecking.db')
     else:
         print("unexpected answer")
@@ -214,8 +220,12 @@ def collect_data_with_multiprocessing(root_directory: str):
 
     start_time = time.time()
     cursor = connection.cursor()
-    drop_data_base(cursor)
-    create_table(cursor)
+    if is_need_create_db:
+        create_table(cursor)
+    else:
+        clear_data_base(cursor)
+
+
 
     if not os.path.exists('timed_data_base'):
         os.makedirs('timed_data_base')
@@ -332,7 +342,10 @@ def main():
 
 
     elif operation == "2":
-        find_difference()
+        if os.path.exists("firstChecking.db") and os.path.exists("secondChecking.db"):
+            find_difference()
+        else:
+            print("Data base was not found")
 
     else:
         print("unexpected answer")
